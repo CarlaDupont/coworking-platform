@@ -44,8 +44,3 @@ Toutes les routes publiques passent par `/api` :
 - `/api/members`
 - `/api/reservations`
 
-## Test automatique
-
-```bash
-python3 main.py
-```
