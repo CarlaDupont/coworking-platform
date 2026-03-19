@@ -15,13 +15,13 @@ public class Member {
     @Enumerated(EnumType.STRING)
     private SubscriptionType subscriptionType;
 
-    private boolean suspended;
+    private Boolean suspended;
     private Integer maxConcurrentBookings;
 
     public Member() {
     }
 
-    public Member(Long id, String fullName, String email, SubscriptionType subscriptionType, boolean suspended, Integer maxConcurrentBookings) {
+    public Member(Long id, String fullName, String email, SubscriptionType subscriptionType, Boolean suspended, Integer maxConcurrentBookings) {
         this.id = id;
         this.fullName = fullName;
         this.email = email;
@@ -63,10 +63,10 @@ public class Member {
     }
 
     public boolean isSuspended() {
-        return suspended;
+        return Boolean.TRUE.equals(suspended);
     }
 
-    public void setSuspended(boolean suspended) {
+    public void setSuspended(Boolean suspended) {
         this.suspended = suspended;
     }
 

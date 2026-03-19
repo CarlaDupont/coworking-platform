@@ -2,19 +2,23 @@ package org.example.memberservice.service;
 
 import org.example.memberservice.entity.Member;
 import org.example.memberservice.entity.SubscriptionType;
+import org.example.memberservice.producer.MemberEventProducer;
 import org.example.memberservice.repository.MemberRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 @Service
 public class MemberService {
 
     private final MemberRepository memberRepository;
+    private final MemberEventProducer memberEventProducer;
 
-    public MemberService(MemberRepository memberRepository) {
+    public MemberService(MemberRepository memberRepository, MemberEventProducer memberEventProducer) {
         this.memberRepository = memberRepository;
+        this.memberEventProducer = memberEventProducer;
     }
 
     public List<Member> getAllMembers() {
@@ -41,11 +45,15 @@ public class MemberService {
                     member.setMaxConcurrentBookings(determineMaxBookings(updatedMember.getSubscriptionType()));
                     return memberRepository.save(member);
                 })
-                .orElseThrow(() -> new RuntimeException("Membre non trouvé avec l'id : " + id));
+                .orElseThrow(() -> new NoSuchElementException("Member not found"));
     }
 
     public void deleteMember(Long id) {
-        memberRepository.deleteById(id);
+        Member member = memberRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Member not found"));
+
+        memberRepository.delete(member);
+        memberEventProducer.publishMemberDeleted(id);
     }
 
     public boolean canReserve(Long id) {
@@ -60,7 +68,7 @@ public class MemberService {
                     member.setSuspended(suspended);
                     return memberRepository.save(member);
                 })
-                .orElseThrow(() -> new RuntimeException("Membre non trouvé avec l'id : " + id));
+                .orElseThrow(() -> new NoSuchElementException("Member not found"));
     }
 
     private int determineMaxBookings(SubscriptionType subscriptionType) {

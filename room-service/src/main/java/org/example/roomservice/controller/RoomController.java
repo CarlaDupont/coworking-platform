@@ -2,12 +2,14 @@ package org.example.roomservice.controller;
 
 import org.example.roomservice.entity.Room;
 import org.example.roomservice.service.RoomService;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.NoSuchElementException;
 
 @RestController
-@RequestMapping("/rooms")
+@RequestMapping({"/rooms", "/api/rooms"})
 public class RoomController {
 
     private final RoomService roomService;
@@ -24,7 +26,7 @@ public class RoomController {
     @GetMapping("/{id}")
     public Room getRoomById(@PathVariable Long id) {
         return roomService.getRoomById(id)
-                .orElseThrow(() -> new RuntimeException("Salle non trouvée avec l'id : " + id));
+                .orElseThrow(() -> new NoSuchElementException("Room not found"));
     }
 
     @PostMapping
@@ -38,6 +40,7 @@ public class RoomController {
     }
 
     @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteRoom(@PathVariable Long id) {
         roomService.deleteRoom(id);
     }
@@ -47,7 +50,7 @@ public class RoomController {
         return roomService.isRoomAvailable(id);
     }
 
-    @PutMapping("/{id}/availability")
+    @RequestMapping(value = "/{id}/availability", method = {RequestMethod.PUT, RequestMethod.PATCH})
     public Room updateAvailability(@PathVariable Long id, @RequestParam boolean available) {
         return roomService.updateAvailability(id, available);
     }

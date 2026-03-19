@@ -5,9 +5,10 @@ import org.example.reservationservice.service.ReservationService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.NoSuchElementException;
 
 @RestController
-@RequestMapping("/reservations")
+@RequestMapping({"/reservations", "/api/reservations"})
 public class ReservationController {
 
     private final ReservationService reservationService;
@@ -24,7 +25,7 @@ public class ReservationController {
     @GetMapping("/{id}")
     public Reservation getReservationById(@PathVariable Long id) {
         return reservationService.getReservationById(id)
-                .orElseThrow(() -> new RuntimeException("Réservation non trouvée avec l'id : " + id));
+                .orElseThrow(() -> new NoSuchElementException("Reservation not found"));
     }
 
     @GetMapping("/member/{memberId}")
@@ -42,12 +43,12 @@ public class ReservationController {
         return reservationService.createReservation(reservation);
     }
 
-    @PutMapping("/{id}/cancel")
+    @RequestMapping(value = "/{id}/cancel", method = {RequestMethod.PUT, RequestMethod.POST})
     public Reservation cancelReservation(@PathVariable Long id) {
         return reservationService.cancelReservation(id);
     }
 
-    @PutMapping("/{id}/complete")
+    @RequestMapping(value = "/{id}/complete", method = {RequestMethod.PUT, RequestMethod.POST})
     public Reservation completeReservation(@PathVariable Long id) {
         return reservationService.completeReservation(id);
     }

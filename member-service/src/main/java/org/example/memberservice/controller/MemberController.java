@@ -2,12 +2,14 @@ package org.example.memberservice.controller;
 
 import org.example.memberservice.entity.Member;
 import org.example.memberservice.service.MemberService;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.NoSuchElementException;
 
 @RestController
-@RequestMapping("/members")
+@RequestMapping({"/members", "/api/members"})
 public class MemberController {
 
     private final MemberService memberService;
@@ -24,7 +26,7 @@ public class MemberController {
     @GetMapping("/{id}")
     public Member getMemberById(@PathVariable Long id) {
         return memberService.getMemberById(id)
-                .orElseThrow(() -> new RuntimeException("Membre non trouvé avec l'id : " + id));
+                .orElseThrow(() -> new NoSuchElementException("Member not found"));
     }
 
     @PostMapping
@@ -38,6 +40,7 @@ public class MemberController {
     }
 
     @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteMember(@PathVariable Long id) {
         memberService.deleteMember(id);
     }
@@ -47,7 +50,7 @@ public class MemberController {
         return memberService.canReserve(id);
     }
 
-    @PutMapping("/{id}/suspension")
+    @RequestMapping(value = "/{id}/suspension", method = {RequestMethod.PUT, RequestMethod.PATCH})
     public Member updateSuspension(@PathVariable Long id, @RequestParam boolean suspended) {
         return memberService.updateSuspension(id, suspended);
     }

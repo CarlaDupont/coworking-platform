@@ -1,6 +1,7 @@
 package org.example.reservationservice.client;
 
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 @Service
@@ -13,10 +14,14 @@ public class RoomClient {
     }
 
     public RoomDto getRoomById(Long roomId) {
-        return restTemplate.getForObject(
-                "http://room-service/rooms/" + roomId,
-                RoomDto.class
-        );
+        try {
+            return restTemplate.getForObject(
+                    "http://room-service/rooms/" + roomId,
+                    RoomDto.class
+            );
+        } catch (HttpClientErrorException.NotFound exception) {
+            return null;
+        }
     }
 
     public boolean isRoomAvailable(Long roomId) {

@@ -1,19 +1,23 @@
 package org.example.roomservice.service;
 
 import org.example.roomservice.entity.Room;
+import org.example.roomservice.producer.RoomEventProducer;
 import org.example.roomservice.repository.RoomRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 @Service
 public class RoomService {
 
     private final RoomRepository roomRepository;
+    private final RoomEventProducer roomEventProducer;
 
-    public RoomService(RoomRepository roomRepository) {
+    public RoomService(RoomRepository roomRepository, RoomEventProducer roomEventProducer) {
         this.roomRepository = roomRepository;
+        this.roomEventProducer = roomEventProducer;
     }
 
     public List<Room> getAllRooms() {
@@ -25,6 +29,7 @@ public class RoomService {
     }
 
     public Room createRoom(Room room) {
+        room.setAvailable(true);
         return roomRepository.save(room);
     }
 
@@ -39,11 +44,15 @@ public class RoomService {
                     room.setAvailable(updatedRoom.isAvailable());
                     return roomRepository.save(room);
                 })
-                .orElseThrow(() -> new RuntimeException("Salle non trouvée avec l'id : " + id));
+                .orElseThrow(() -> new NoSuchElementException("Room not found"));
     }
 
     public void deleteRoom(Long id) {
-        roomRepository.deleteById(id);
+        Room room = roomRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Room not found"));
+
+        roomRepository.delete(room);
+        roomEventProducer.publishRoomDeleted(id);
     }
 
     public boolean isRoomAvailable(Long id) {
@@ -58,6 +67,6 @@ public class RoomService {
                     room.setAvailable(available);
                     return roomRepository.save(room);
                 })
-                .orElseThrow(() -> new RuntimeException("Salle non trouvée avec l'id : " + id));
+                .orElseThrow(() -> new NoSuchElementException("Room not found"));
     }
 }

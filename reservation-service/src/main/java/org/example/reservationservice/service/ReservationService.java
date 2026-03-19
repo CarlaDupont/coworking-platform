@@ -6,10 +6,16 @@ import org.example.reservationservice.client.RoomClient;
 import org.example.reservationservice.client.RoomDto;
 import org.example.reservationservice.entity.Reservation;
 import org.example.reservationservice.entity.ReservationStatus;
+import org.example.reservationservice.producer.ReservationEventProducer;
 import org.example.reservationservice.repository.ReservationRepository;
+import org.example.reservationservice.state.ReservationStateManager;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 @Service
@@ -18,13 +24,19 @@ public class ReservationService {
     private final ReservationRepository reservationRepository;
     private final RoomClient roomClient;
     private final MemberClient memberClient;
+    private final ReservationStateManager reservationStateManager;
+    private final ReservationEventProducer reservationEventProducer;
 
     public ReservationService(ReservationRepository reservationRepository,
                               RoomClient roomClient,
-                              MemberClient memberClient) {
+                              MemberClient memberClient,
+                              ReservationStateManager reservationStateManager,
+                              ReservationEventProducer reservationEventProducer) {
         this.reservationRepository = reservationRepository;
         this.roomClient = roomClient;
         this.memberClient = memberClient;
+        this.reservationStateManager = reservationStateManager;
+        this.reservationEventProducer = reservationEventProducer;
     }
 
     public List<Reservation> getAllReservations() {
@@ -43,25 +55,40 @@ public class ReservationService {
         return reservationRepository.findByRoomId(roomId);
     }
 
+    @Transactional
     public Reservation createReservation(Reservation reservation) {
+        validateReservationWindow(reservation);
+
         RoomDto room = roomClient.getRoomById(reservation.getRoomId());
         if (room == null) {
-            throw new RuntimeException("Salle introuvable");
+            throw new NoSuchElementException("Room not found");
         }
 
         MemberDto member = memberClient.getMemberById(reservation.getMemberId());
         if (member == null) {
-            throw new RuntimeException("Membre introuvable");
+            throw new NoSuchElementException("Member not found");
         }
 
-        boolean roomAvailable = roomClient.isRoomAvailable(reservation.getRoomId());
+        LocalDateTime now = LocalDateTime.now();
+        boolean reservationStartsNow = !reservation.getStartDateTime().isAfter(now)
+                && reservation.getEndDateTime().isAfter(now);
+        boolean roomAvailable = !reservationStartsNow || roomClient.isRoomAvailable(reservation.getRoomId());
         if (!roomAvailable) {
-            throw new RuntimeException("Salle non disponible");
+            throw new IllegalStateException("Room is already booked for the selected time slot");
         }
 
         boolean canReserve = memberClient.canReserve(reservation.getMemberId());
         if (!canReserve) {
-            throw new RuntimeException("Membre suspendu");
+            throw new IllegalStateException("Member is suspended");
+        }
+
+        long activeReservations = reservationRepository.countByMemberIdAndStatus(
+                reservation.getMemberId(),
+                ReservationStatus.CONFIRMED
+        );
+        if (member.getMaxConcurrentBookings() != null
+                && activeReservations >= member.getMaxConcurrentBookings()) {
+            throw new IllegalStateException("Member is suspended");
         }
 
         List<Reservation> conflicts = reservationRepository
@@ -73,38 +100,114 @@ public class ReservationService {
                 );
 
         if (!conflicts.isEmpty()) {
-            throw new RuntimeException("Conflit de réservation sur ce créneau");
+            throw new IllegalStateException("Room is already booked for the selected time slot");
         }
 
         reservation.setStatus(ReservationStatus.CONFIRMED);
         Reservation savedReservation = reservationRepository.save(reservation);
 
-        roomClient.updateRoomAvailability(reservation.getRoomId(), false);
+        updateRoomAvailabilityForCurrentTime(savedReservation.getRoomId());
+        updateMemberSuspensionStatus(savedReservation.getMemberId());
 
         return savedReservation;
     }
 
+    @Transactional
     public Reservation cancelReservation(Long id) {
         Reservation reservation = reservationRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Réservation introuvable"));
+                .orElseThrow(() -> new NoSuchElementException("Reservation not found"));
 
-        reservation.setStatus(ReservationStatus.CANCELLED);
+        return transitionReservation(reservation, ReservationStatus.CANCELLED);
+    }
+
+    @Transactional
+    public Reservation completeReservation(Long id) {
+        Reservation reservation = reservationRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Reservation not found"));
+
+        return transitionReservation(reservation, ReservationStatus.COMPLETED);
+    }
+
+    @Transactional
+    public void cancelReservationsForRoom(Long roomId) {
+        List<Reservation> roomReservations = reservationRepository.findByRoomId(roomId);
+        for (Reservation reservation : roomReservations) {
+            if (reservation.getStatus() == ReservationStatus.CONFIRMED) {
+                transitionReservation(reservation, ReservationStatus.CANCELLED);
+            }
+        }
+    }
+
+    @Transactional
+    public void deleteReservationsForMember(Long memberId) {
+        List<Reservation> memberReservations = reservationRepository.findByMemberId(memberId);
+        for (Reservation reservation : memberReservations) {
+            reservationRepository.delete(reservation);
+            updateRoomAvailabilityForCurrentTime(reservation.getRoomId());
+        }
+    }
+
+    @Scheduled(fixedDelay = 60000)
+    @Transactional
+    public void completeExpiredReservations() {
+        List<Reservation> expiredReservations = reservationRepository.findByStatusAndEndDateTimeBefore(
+                ReservationStatus.CONFIRMED,
+                LocalDateTime.now()
+        );
+
+        for (Reservation reservation : expiredReservations) {
+            transitionReservation(reservation, ReservationStatus.COMPLETED);
+        }
+    }
+
+    private Reservation transitionReservation(Reservation reservation, ReservationStatus targetStatus) {
+        reservationStateManager.transitionTo(reservation, targetStatus);
         Reservation savedReservation = reservationRepository.save(reservation);
 
-        roomClient.updateRoomAvailability(reservation.getRoomId(), true);
+        updateRoomAvailabilityForCurrentTime(savedReservation.getRoomId());
+        updateMemberSuspensionStatus(savedReservation.getMemberId());
 
         return savedReservation;
     }
 
-    public Reservation completeReservation(Long id) {
-        Reservation reservation = reservationRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Réservation introuvable"));
+    private void updateRoomAvailabilityForCurrentTime(Long roomId) {
+        LocalDateTime now = LocalDateTime.now();
+        boolean hasOngoingReservation = !reservationRepository
+                .findByRoomIdAndStatusAndStartDateTimeLessThanAndEndDateTimeGreaterThan(
+                        roomId,
+                        ReservationStatus.CONFIRMED,
+                        now,
+                        now
+                )
+                .isEmpty();
+        try {
+            roomClient.updateRoomAvailability(roomId, !hasOngoingReservation);
+        } catch (Exception ignored) {
+            // La salle peut avoir été supprimée avant le traitement asynchrone de l'événement Kafka.
+        }
+    }
 
-        reservation.setStatus(ReservationStatus.COMPLETED);
-        Reservation savedReservation = reservationRepository.save(reservation);
+    private void updateMemberSuspensionStatus(Long memberId) {
+        MemberDto member = memberClient.getMemberById(memberId);
+        if (member == null || member.getMaxConcurrentBookings() == null) {
+            return;
+        }
 
-        roomClient.updateRoomAvailability(reservation.getRoomId(), true);
+        long activeReservations = reservationRepository.countByMemberIdAndStatus(
+                memberId,
+                ReservationStatus.CONFIRMED
+        );
+        boolean shouldBeSuspended = activeReservations >= member.getMaxConcurrentBookings();
+        reservationEventProducer.publishMemberSuspensionUpdated(memberId, shouldBeSuspended);
+    }
 
-        return savedReservation;
+    private void validateReservationWindow(Reservation reservation) {
+        if (reservation.getStartDateTime() == null || reservation.getEndDateTime() == null) {
+            throw new IllegalArgumentException("start and end dates are required");
+        }
+
+        if (!reservation.getEndDateTime().isAfter(reservation.getStartDateTime())) {
+            throw new IllegalArgumentException("end date must be after start date");
+        }
     }
 }
